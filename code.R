@@ -2,29 +2,15 @@ library(data.table)
 library(R.utils)
 library(knitr)
 library(rmarkdown)
+library(ggplot2)
 
 ## set working drive to maindir and create subdir (if it does not exist) to hold date
-maindir <- getwd()
-subdir <- "rawData"
-
-if (file.exists(subdir)){
-  setwd(file.path(maindir, subdir))
-} else {
-  dir.create(file.path(maindir, subdir))
-  
+if (!file.exists("StormData.csv.bz2")) {
+  fileUrl<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+  download.file(fileUrl, destfile="StormData.csv.bz2", method="curl")
 }
 
-## download and read raw data
-
-if(!file.exists(paste0(subdir,"/StormData.csv.bz2"))){
-  download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
-                destfile=paste0(subdir,"/stormData.csv.bz2"))
-}
-
-if(!file.exists(paste0(subdir,"/stormdata.csv")))
-{
-  storm <- fread(input = paste0(subdir,"/StormData.csv.bz2"))
-}
+storm <- fread(input = paste0(subdir,"/StormData.csv.bz2"))
 
 ## Check field names and data types
 names(storm)
@@ -73,6 +59,9 @@ human <- human[order(-rank(HUMANLOSS))]
 human$EVTYPE[(human$EVTYPE == "TSTM WIND")] <- "THUNDERSTORM WIND"
 human$EVTYPE[(human$EVTYPE == "HURRICANE/TYPHOON")] <- "HURRICANE (TYPHOON)"
 
+human <- human[,sum(HUMANLOSS), by = EVTYPE]
+setnames(human, "V1", "HUMANLOSS")
+
 ## Repeat process for loss
 econ <- subset[,sum(TOTALLOSS), by = EVTYPE]
 setnames(econ, "V1", "TOTALLOSS")
@@ -82,3 +71,23 @@ econ <- econ[order(-rank(TOTALLOSS))]
 
 econ$EVTYPE[(econ$EVTYPE == "HURRICANE/TYPHOON")] <- "HURRICANE (TYPHOON)"
 econ$EVTYPE[(econ$EVTYPE == "STORM SURGE")] <- "STORM SURGE/TIDE"
+
+
+options(scipen = 999)
+## Present Human Impact Results
+g1 <- ggplot(human[1:9,], aes(x = reorder(EVTYPE, -HUMANLOSS), y = HUMANLOSS)) +
+  geom_bar(stat = "identity", fill = "darkgray") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position = "none") +
+  xlab("Event Type") + ylab("Human Impact (Fatalities & Injuries)") +
+  ggtitle ("Human Impact by Disaster Type")
+g1
+
+## Present Economic Impact Results
+g2 <- ggplot(econ[1:10,], aes(x = reorder(EVTYPE, -TOTALLOSS), y = TOTALLOSS/(10^9))) +
+  geom_bar(stat = "identity", fill = "darkgray") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position = "none") +
+  xlab("Event Type") + ylab("Economic Impact (billion USD)") +
+  ggtitle ("Economic Impact by Disaster Type")
+g2
