@@ -10,7 +10,7 @@ if (!file.exists("StormData.csv.bz2")) {
   download.file(fileUrl, destfile="StormData.csv.bz2", method="curl")
 }
 
-storm <- fread(input = paste0(subdir,"/StormData.csv.bz2"))
+storm <- fread(input = "StormData.csv.bz2")
 
 ## Check field names and data types
 names(storm)

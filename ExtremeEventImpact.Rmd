@@ -1,0 +1,160 @@
+---
+title: "Analysis of Human and Economic Impacts of Extreme Weather Events"
+author: "JSchneyer"
+date: "12/6/2020"
+output: html_document
+---
+
+# Synopsis
+
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This analysis has shown that tornadoes have had the largest impact on human life (fatalities and injuries) and floods have had the greatest economic impact to property and crops in the U.S. since 1996.
+
+## Data Source
+
+This analysis uses the data in the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage. 
+
+The raw data employed in the analysis can be downloaded via the NOAA website:
+
+* [Storm Data](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) (47 MB)
+
+## Data Processing
+
+The first step is to load the necessary libraries to complete the analysis.
+
+```{r warning=FALSE, message=FALSE}
+library(data.table)
+library(R.utils)
+library(knitr)
+library(rmarkdown)
+library(ggplot2)
+```
+
+If the data was not manually downloaded before, run the following code to download and read the data, as well as understand the data fields present. 
+
+```{r eval=TRUE,echo=TRUE}
+if (!file.exists("StormData.csv.bz2")) {
+  fileUrl<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+  download.file(fileUrl, destfile="StormData.csv.bz2", method="curl")
+}
+
+storm <- fread(input = "StormData.csv.bz2")
+
+str(storm)
+```
+
+Only a select number of columns from the raw dataset are required to complete the analysis. Create a subset (Date, Type, Fatalities, Injuries, Property and Crop Damage). 
+
+The date field ("BGN_DATE") will need to be converted from a string to a date, and a new column "Year" will be created. The data from before 1996 is incomplete, and will therefore be ignored. Additionally, events with zero loss (economic or human) are ignored.
+
+```{r eval=TRUE, echo=TRUE}
+nms <- c("BGN_DATE","EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")
+subset <- storm[,..nms]
+
+## Format date column
+subset$BGN_DATE <- as.Date(subset$BGN_DATE, "%m/%d/%Y")
+subset <- subset[,Year := year(subset$BGN_DATE)]
+
+## subset data for year >= 1996
+subset <- subset[Year >= 1996]
+
+## Remove rows with zero property or crop damage, fatalities or injuries
+subset <- subset[FATALITIES > 0 | INJURIES > 0 | PROPDMG > 0 |CROPDMG > 0]
+```
+
+The columns "PROPDMGEXP" and "CROPDMGEXP" contain an exponential multipliers for the property and crop damages. The unique exponential multipliers are:
+
+```{r}
+unique(subset$PROPDMGEXP)
+unique(subset$CROPDMGEXP)
+```
+
+Blanks are assumed to be a multiplier of 1 (10 to the 0 power), K is assumed to be thousands, M is assumed to be millions and B is assumed to be billions. Therefore, to compute economic damage, the CROP and PROPDMG columns need to be multiplied by their respective exponential multipliers.
+
+Fatalities and injuries are combined to compute human impact. Property and crop damages are combined to compute total loss by event type.
+
+```{r}
+## Calculate property and crop loss by multiplying DMG column by exponent. Sum PROP and CROP LOSS to get TOTAL LOSS
+subset <- subset[PROPDMGEXP == "", PROPLOSS := PROPDMG]
+subset <- subset[PROPDMGEXP == "K", PROPLOSS := PROPDMG*10^3]
+subset <- subset[PROPDMGEXP == "M", PROPLOSS := PROPDMG*10^6]
+subset <- subset[PROPDMGEXP == "B", PROPLOSS := PROPDMG*10^9]
+
+subset <- subset[CROPDMGEXP == "", CROPLOSS := CROPDMG]
+subset <- subset[CROPDMGEXP == "K", CROPLOSS := CROPDMG*10^3]
+subset <- subset[CROPDMGEXP == "M", CROPLOSS := CROPDMG*10^6]
+subset <- subset[CROPDMGEXP == "B", CROPLOSS := CROPDMG*10^9]
+
+subset <- subset[,TOTALLOSS := PROPLOSS+CROPLOSS]
+subset <- subset[,HUMANLOSS := FATALITIES+INJURIES]
+```
+
+A quick look at the unique event types will show that there are greater than 200 distinct types, despite the data documentation stating that there are only 48. Cleaning up all the event types is unnecessary, because we will only look at the most extreme event types by taking those where the human or economic losses are greater than the 95th percentile.
+
+A few of the event types (TSTM WIND, HURRICANE/TYPHOON, STORM SURGE) need to be changed.
+
+```{r}
+subset$EVTYPE <- toupper(subset$EVTYPE)
+
+human <- subset[,sum(HUMANLOSS), by = EVTYPE]
+setnames(human, "V1", "HUMANLOSS")
+
+human <- human[HUMANLOSS > quantile(HUMANLOSS, prob = 0.95)]
+human <- human[order(-rank(HUMANLOSS))]
+
+human$EVTYPE[(human$EVTYPE == "TSTM WIND")] <- "THUNDERSTORM WIND"
+human$EVTYPE[(human$EVTYPE == "HURRICANE/TYPHOON")] <- "HURRICANE (TYPHOON)"
+
+human <- human[,sum(HUMANLOSS), by = EVTYPE]
+setnames(human, "V1", "HUMANLOSS")
+
+## Repeat process for loss
+econ <- subset[,sum(TOTALLOSS), by = EVTYPE]
+setnames(econ, "V1", "TOTALLOSS")
+
+econ <- econ[TOTALLOSS > quantile(TOTALLOSS, prob = 0.95)]
+econ <- econ[order(-rank(TOTALLOSS))]
+
+econ$EVTYPE[(econ$EVTYPE == "HURRICANE/TYPHOON")] <- "HURRICANE (TYPHOON)"
+econ$EVTYPE[(econ$EVTYPE == "STORM SURGE")] <- "STORM SURGE/TIDE"
+```
+
+## Results
+
+A quick look at the top event types in terms of human impact (fatalities and injuries combined) can be seen below:
+
+```{r}
+human[1:9,]
+```
+
+We see that tornadoes are responsible for the greatest human impact. In terms of economic impact, flood appears to be the biggest threat.
+
+```{r}
+econ[1:10,]
+```
+
+A barplot of the human impact is presented below.
+```{r}
+g1 <- ggplot(human[1:9,], aes(x = reorder(EVTYPE, -HUMANLOSS), y = HUMANLOSS)) +
+  geom_bar(stat = "identity", fill = "darkgray") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position = "none") +
+  xlab("Event Type") + ylab("Human Impact (Fatalities & Injuries)") +
+  ggtitle ("Human Impact by Disaster Type")
+g1
+```
+
+We can see that tornadoes are far more impactful than the second place event type (Excessive Heat, 8188).
+
+```{r}
+g2 <- ggplot(econ[1:10,], aes(x = reorder(EVTYPE, -TOTALLOSS), y = TOTALLOSS/(10^9))) +
+  geom_bar(stat = "identity", fill = "darkgray") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  theme(legend.position = "none") +
+  xlab("Event Type") + ylab("Economic Impact (billion USD)") +
+  ggtitle ("Economic Impact by Disaster Type")
+g2
+```
+
+Likewise, floods are the most extreme event type in terms of economic loss, generating more than 150 billion of loss since 1996.
